@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>KeyMirror</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d0d0d;
+    color: #e0e0e0;
+    font-family: 'Courier New', Courier, monospace;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Status bar */
+  #statusBar {
+    padding: 10px 16px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #222;
+    flex-shrink: 0;
+  }
+
+  #statusDot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #555;
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+
+  #statusDot.connected { background: #00e676; }
+  #statusDot.disconnected { background: #e94560; }
+  #statusDot.connecting { background: #ff9800; }
+
+  #statusText {
+    color: #888;
+    font-size: 13px;
+  }
+
+  /* Settings button */
+  #settingsBtn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color 0.2s;
+  }
+  #settingsBtn:hover, #settingsBtn:active {
+    color: #aaa;
+    background: #1a1a1a;
+  }
+
+  /* Main display area */
+  #displayWrapper {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #display {
+    font-size: var(--font-size, 42px);
+    line-height: 1.2;
+    color: #00e676;
+    padding: 24px;
+    text-align: left;
+    word-break: break-all;
+    white-space: pre-wrap;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+  }
+
+  #textContent {
+    display: inline;
+  }
+
+  /* Cursor blink */
+  #cursor {
+    display: inline-block;
+    width: 3px;
+    height: 1em;
+    background: #00e676;
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+    margin-left: 2px;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  .placeholder-text {
+    color: #333 !important;
+    font-style: italic;
+  }
+
+  /* Bottom info bar */
+  #infoBar {
+    padding: 8px 16px;
+    font-size: 11px;
+    color: #444;
+    border-top: 1px solid #1a1a1a;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  /* Settings panel */
+  #settingsPanel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  #settingsPanel.open { display: flex; }
+
+  #settingsCard {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 16px;
+    padding: 28px 32px;
+    width: 90%;
+    max-width: 420px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+
+  #settingsCard h2 {
+    font-size: 20px;
+    margin-bottom: 24px;
+    color: #e0e0e0;
+  }
+
+  .setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
+  .setting-row label {
+    font-size: 15px;
+    color: #bbb;
+  }
+
+  .setting-row .value {
+    font-size: 18px;
+    color: #00e676;
+    font-weight: bold;
+    min-width: 50px;
+    text-align: right;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 160px;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    outline: none;
+    margin: 0 12px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #00e676;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #00e676;
+    cursor: pointer;
+    border: none;
+  }
+
+  #closeSettings {
+    margin-top: 24px;
+    width: 100%;
+    padding: 12px;
+    background: #222;
+    color: #aaa;
+    border: 1px solid #444;
+    border-radius: 8px;
+    font-size: 16px;
+    font-family: 'Courier New', monospace;
+    cursor: pointer;
+  }
+  #closeSettings:active { background: #333; color: #fff; }
+
+  /* Reconnect banner */
+  #reconnectBanner {
+    display: none;
+    background: #331a1a;
+    color: #e94560;
+    text-align: center;
+    padding: 8px;
+    font-size: 13px;
+    border-top: 1px solid #551a1a;
+    flex-shrink: 0;
+  }
+  #reconnectBanner.show { display: block; }
+</style>
+</head>
+<body>
+
+<div id="statusBar">
+  <div id="statusDot" class="disconnected"></div>
+  <span id="statusText">Connecting...</span>
+  <button id="settingsBtn" title="Settings">⚙</button>
+</div>
+
+<div id="reconnectBanner">⚠ Disconnected — Reconnecting...</div>
+
+<div id="displayWrapper">
+  <div id="display">
+    <span class="placeholder-text" id="placeholder">⌨ Start typing on your PC</span>
+    <span id="textContent"></span>
+    <span id="cursor"></span>
+  </div>
+</div>
+
+<div id="infoBar">KeyMirror · <span id="bufferLabel">15</span> chars shown</div>
+
+<!-- Settings Panel -->
+<div id="settingsPanel">
+  <div id="settingsCard">
+    <h2>⚙ Settings</h2>
+    <div class="setting-row">
+      <label>Buffer Size</label>
+      <input type="range" id="bufRange" min="5" max="30" value="15" step="1">
+      <span id="bufValue" class="value">15</span>
+    </div>
+    <div class="setting-row">
+      <label>Font Size</label>
+      <input type="range" id="fontRange" min="24" max="72" value="42" step="2">
+      <span id="fontValue" class="value">42px</span>
+    </div>
+    <button id="closeSettings">Close</button>
+  </div>
+</div>
+
+<script>
+// ── Settings ──
+const LS_BUF = 'km_buf';
+const LS_FONT = 'km_font';
+
+let bufferSize = parseInt(localStorage.getItem(LS_BUF)) || 15;
+let fontSize = parseInt(localStorage.getItem(LS_FONT)) || 42;
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ── DOM refs ──
+const textEl = document.getElementById('textContent');
+const placeholder = document.getElementById('placeholder');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const bufferLabel = document.getElementById('bufferLabel');
+const infoBar = document.getElementById('infoBar');
+const reconnectBanner = document.getElementById('reconnectBanner');
+
+const bufRange = document.getElementById('bufRange');
+const bufValue = document.getElementById('bufValue');
+const fontRange = document.getElementById('fontRange');
+const fontValue = document.getElementById('fontValue');
+const settingsPanel = document.getElementById('settingsPanel');
+const settingsBtn = document.getElementById('settingsBtn');
+const closeSettingsBtn = document.getElementById('closeSettings');
+
+// Apply saved settings
+updateFontSize(fontSize);
+updateBufferSize(bufferSize);
+
+bufRange.value = bufferSize;
+bufValue.textContent = bufferSize;
+fontRange.value = fontSize;
+fontValue.textContent = fontSize + 'px';
+
+function updateBufferSize(n) {
+  bufferSize = clamp(n, 5, 30);
+  bufValue.textContent = bufferSize;
+  bufRange.value = bufferSize;
+  bufferLabel.textContent = bufferSize;
+  localStorage.setItem(LS_BUF, bufferSize);
+
+  // Trim if current text exceeds buffer
+  if (textEl.textContent.length > bufferSize) {
+    textEl.textContent = textEl.textContent.slice(-bufferSize);
+  }
+}
+
+function updateFontSize(size) {
+  fontSize = clamp(size, 24, 72);
+  fontValue.textContent = fontSize + 'px';
+  fontRange.value = fontSize;
+  document.documentElement.style.setProperty('--font-size', fontSize + 'px');
+  localStorage.setItem(LS_FONT, fontSize);
+}
+
+// Settings panel toggle
+settingsBtn.addEventListener('click', () => settingsPanel.classList.add('open'));
+closeSettingsBtn.addEventListener('click', () => settingsPanel.classList.remove('open'));
+settingsPanel.addEventListener('click', (e) => {
+  if (e.target === settingsPanel) settingsPanel.classList.remove('open');
+});
+
+bufRange.addEventListener('input', (e) => updateBufferSize(parseInt(e.target.value)));
+fontRange.addEventListener('input', (e) => updateFontSize(parseInt(e.target.value)));
+
+// ── WebSocket ──
+let ws = null;
+let reconnectTimer = null;
+
+function getServerUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const ip = params.get('ip');
+  if (ip) return `ws://${ip}:${params.get('port') || 8765}`;
+
+  // Derive from current page URL
+  const host = window.location.host;
+  if (host) return `ws://${host}/ws`;
+
+  // Manual entry fallback is handled below
+  return null;
+}
+
+function connect() {
+  let url = getServerUrl();
+
+  if (!url) {
+    // Ask user for IP
+    const ip = prompt("Enter your PC's IP address (e.g. 192.168.1.100):", "");
+    if (!ip) return;
+    url = `ws://${ip}:8765/ws`;
+  }
+
+  setStatus('connecting', 'Connecting to ' + url.replace('/ws', '') + '...');
+
+  ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    setStatus('connected', 'Connected ✓');
+    reconnectBanner.classList.remove('show');
+  };
+
+  ws.onmessage = (event) => {
+    showConnectedState();
+    const text = event.data;
+    appendText(text);
+  };
+
+  ws.onclose = () => {
+    setStatus('disconnected', 'Disconnected');
+    if (!ws.manualClose) scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    setStatus('disconnected', 'Connection error');
+    ws.close();
+  };
+}
+
+function scheduleReconnect() {
+  reconnectBanner.classList.add('show');
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    connect();
+  }, 3000);
+}
+
+function disconnect() {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (ws) { ws.manualClose = true; ws.close(); ws = null; }
+  setStatus('disconnected', 'Disconnected');
+}
+
+function setStatus(state, text) {
+  statusDot.className = state;
+  statusText.textContent = text;
+}
+
+function showConnectedState() {
+  // Brief flash of green to show recent input
+  statusDot.classList.add('connected');
+}
+
+// ── Text rendering (FIFO buffer) ──
+function appendText(text) {
+  if (text === '\x00CLEAR\x00') {
+    textEl.textContent = '';
+    placeholder.style.display = '';
+    return;
+  }
+
+  if (text === '\x00PING\x00') {
+    // Server keepalive — ignore silently
+    return;
+  }
+
+  if (text === '\b') {
+    if (textEl.textContent.length > 0) {
+      textEl.textContent = textEl.textContent.slice(0, -1);
+    }
+    if (textEl.textContent.length === 0) {
+      placeholder.style.display = '';
+    }
+    return;
+  }
+
+  if (text === '\n') {
+    textEl.textContent += '\n';
+  } else if (text === '\t') {
+    textEl.textContent += '    ';
+  } else {
+    textEl.textContent += text;
+  }
+
+  placeholder.style.display = 'none';
+
+  // FIFO: keep only last N characters
+  if (textEl.textContent.length > bufferSize) {
+    textEl.textContent = textEl.textContent.slice(-bufferSize);
+  }
+}
+
+// ── Auto-connect ──
+connect();
+</script>
+</body>
+</html>
