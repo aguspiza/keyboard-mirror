@@ -74,7 +74,7 @@ async def handle_index(request):
 
 # --- WebSocket handler ---
 async def handle_ws(request):
-    ws = web.WebSocketResponse(heartbeat=15)
+    ws = web.WebSocketResponse(heartbeat=25)
     await ws.prepare(request)
 
     try:
@@ -106,8 +106,8 @@ async def handle_ws(request):
 
         while not ws.closed:
             try:
-                # Timeout lets us re-check ws.closed periodically
-                char = await asyncio.wait_for(key_queue.get(), timeout=20.0)
+                # Short timeout to detect dead connections quickly
+                char = await asyncio.wait_for(key_queue.get(), timeout=5.0)
                 if not await safe_send(char):
                     break
             except asyncio.TimeoutError:
