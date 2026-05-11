@@ -248,8 +248,7 @@
 <div id="displayWrapper">
   <div id="display">
     <span class="placeholder-text" id="placeholder">⌨ Start typing on your PC</span>
-    <span id="textContent"></span>
-    <span id="cursor"></span>
+    <span id="textBefore"></span><span id="cursor"></span><span id="textAfter"></span>
   </div>
 </div>
 
@@ -283,13 +282,19 @@ let fontSize = parseInt(localStorage.getItem(LS_FONT)) || 42;
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// ── State ──
+let buffer = '';
+let cursorPos = 0; // index into buffer; 0 = before first char, buffer.length = after last char
+let hasConnected = false;  // true after the first successful connection
+let skipNextClear = false; // suppress CLEAR on reconnects
+
 // ── DOM refs ──
-const textEl = document.getElementById('textContent');
+const textBefore = document.getElementById('textBefore');
+const textAfter = document.getElementById('textAfter');
 const placeholder = document.getElementById('placeholder');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const bufferLabel = document.getElementById('bufferLabel');
-const infoBar = document.getElementById('infoBar');
 const reconnectBanner = document.getElementById('reconnectBanner');
 
 const bufRange = document.getElementById('bufRange');
@@ -316,9 +321,11 @@ function updateBufferSize(n) {
   bufferLabel.textContent = bufferSize;
   localStorage.setItem(LS_BUF, bufferSize);
 
-  // Trim if current text exceeds buffer
-  if (textEl.textContent.length > bufferSize) {
-    textEl.textContent = textEl.textContent.slice(-bufferSize);
+  if (buffer.length > bufferSize) {
+    const trim = buffer.length - bufferSize;
+    buffer = buffer.slice(trim);
+    cursorPos = Math.max(0, cursorPos - trim);
+    renderText();
   }
 }
 
@@ -343,17 +350,16 @@ fontRange.addEventListener('input', (e) => updateFontSize(parseInt(e.target.valu
 // ── WebSocket ──
 let ws = null;
 let reconnectTimer = null;
+let disconnectTimer = null;
 
 function getServerUrl() {
   const params = new URLSearchParams(window.location.search);
   const ip = params.get('ip');
   if (ip) return `ws://${ip}:${params.get('port') || 8765}`;
 
-  // Derive from current page URL
   const host = window.location.host;
   if (host) return `ws://${host}/ws`;
 
-  // Manual entry fallback is handled below
   return null;
 }
 
@@ -361,7 +367,6 @@ function connect() {
   let url = getServerUrl();
 
   if (!url) {
-    // Ask user for IP
     const ip = prompt("Enter your PC's IP address (e.g. 192.168.1.100):", "");
     if (!ip) return;
     url = `ws://${ip}:8765/ws`;
@@ -373,18 +378,23 @@ function connect() {
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
+    if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
+    skipNextClear = hasConnected; // skip CLEAR if this is a reconnect
+    hasConnected = true;
     setStatus('connected', 'Connected ✓');
     reconnectBanner.classList.remove('show');
   };
 
   ws.onmessage = (event) => {
     showConnectedState();
-    const text = event.data;
-    appendText(text);
+    appendText(event.data);
   };
 
   ws.onclose = () => {
-    setStatus('disconnected', 'Disconnected');
+    // Delay showing "disconnected" so brief reconnects don't flash the status
+    disconnectTimer = setTimeout(() => {
+      setStatus('disconnected', 'Disconnected');
+    }, 1500);
     if (!ws.manualClose) scheduleReconnect();
   };
 
@@ -397,9 +407,7 @@ function connect() {
 function scheduleReconnect() {
   reconnectBanner.classList.add('show');
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => {
-    connect();
-  }, 3000);
+  reconnectTimer = setTimeout(connect, 3000);
 }
 
 function disconnect() {
@@ -414,47 +422,74 @@ function setStatus(state, text) {
 }
 
 function showConnectedState() {
-  // Brief flash of green to show recent input
   statusDot.classList.add('connected');
 }
 
-// ── Text rendering (FIFO buffer) ──
+// ── Text rendering ──
+function renderText() {
+  placeholder.style.display = buffer.length === 0 ? '' : 'none';
+  textBefore.textContent = buffer.slice(0, cursorPos);
+  textAfter.textContent = buffer.slice(cursorPos);
+}
+
 function appendText(text) {
   if (text === '\x00CLEAR\x00') {
-    textEl.textContent = '';
-    placeholder.style.display = '';
+    if (skipNextClear) { skipNextClear = false; return; }
+    buffer = '';
+    cursorPos = 0;
+    renderText();
     return;
   }
 
-  if (text === '\x00PING\x00') {
-    // Server keepalive — ignore silently
-    return;
-  }
+  if (text === '\x00PING\x00') return;
+
+  if (text === '\x00LEFT\x00')  { moveCursor(-1);     return; }
+  if (text === '\x00RIGHT\x00') { moveCursor(1);      return; }
+  if (text === '\x00UP\x00')    { moveCursorUp();     return; }
+  if (text === '\x00DOWN\x00')  { moveCursorDown();   return; }
 
   if (text === '\b') {
-    if (textEl.textContent.length > 0) {
-      textEl.textContent = textEl.textContent.slice(0, -1);
+    if (cursorPos > 0) {
+      buffer = buffer.slice(0, cursorPos - 1) + buffer.slice(cursorPos);
+      cursorPos--;
     }
-    if (textEl.textContent.length === 0) {
-      placeholder.style.display = '';
-    }
-    return;
-  }
-
-  if (text === '\n') {
-    textEl.textContent += '\n';
+  } else if (text === '\n') {
+    buffer = buffer.slice(0, cursorPos) + '\n' + buffer.slice(cursorPos);
+    cursorPos++;
   } else if (text === '\t') {
-    textEl.textContent += '    ';
+    buffer = buffer.slice(0, cursorPos) + '    ' + buffer.slice(cursorPos);
+    cursorPos += 4;
   } else {
-    textEl.textContent += text;
+    buffer = buffer.slice(0, cursorPos) + text + buffer.slice(cursorPos);
+    cursorPos += text.length;
   }
-
-  placeholder.style.display = 'none';
 
   // FIFO: keep only last N characters
-  if (textEl.textContent.length > bufferSize) {
-    textEl.textContent = textEl.textContent.slice(-bufferSize);
+  if (buffer.length > bufferSize) {
+    const trim = buffer.length - bufferSize;
+    buffer = buffer.slice(trim);
+    cursorPos = Math.max(0, cursorPos - trim);
   }
+
+  renderText();
+}
+
+// ── Cursor movement ──
+function moveCursor(delta) {
+  cursorPos = Math.max(0, Math.min(buffer.length, cursorPos + delta));
+  renderText();
+}
+
+function moveCursorUp() {
+  const prevNewline = buffer.lastIndexOf('\n', cursorPos - 1);
+  cursorPos = prevNewline === -1 ? 0 : buffer.lastIndexOf('\n', prevNewline - 1) + 1;
+  renderText();
+}
+
+function moveCursorDown() {
+  const nextNewline = buffer.indexOf('\n', cursorPos);
+  cursorPos = nextNewline === -1 ? buffer.length : nextNewline + 1;
+  renderText();
 }
 
 // ── Auto-connect ──
